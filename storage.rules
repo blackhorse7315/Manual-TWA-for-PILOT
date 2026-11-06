@@ -2,7 +2,10 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /manuals/{manualFile} {
-      allow read: if request.auth != null;
+      // Public download, but no public folder listing. Requires conscious authorization
+      // to distribute PDFs and supplementary material to anyone with the app link.
+      allow get: if true;
+      allow list: if false;
       allow create: if request.auth != null
         && request.auth.uid == 'uKTUIiuS3rQcRcmFLhliufbOcds1'
         && manualFile.matches('[a-f0-9-]{36}\\.pdf')
@@ -10,5 +13,6 @@ service firebase.storage {
         && request.resource.contentType == 'application/pdf';
       allow update, delete: if false;
     }
+    match /{allPaths=**} { allow read, write: if false; }
   }
 }

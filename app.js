@@ -4,7 +4,7 @@ const planes=[['ALL','Semua pesawat'],['PK-TWV','Bell 412EP · PK-TWV'],['PK-TWZ
 const kinds={RFM:'RFM',AFM:'AFM',NORMAL:'Normal Checklist',EMERGENCY:'Emergency Checklist'};
 // UID Admin khusus yang telah ditetapkan untuk project transwisata-egr.
 const ADMIN_UID='uKTUIiuS3rQcRcmFLhliufbOcds1';
-let db,local=[],cloud=[],tab='ALL',authUser=null,isAdmin=false,fb=null,viewURL=null,viewDoc=null,installEvent=null,loggingIn=false,activeUploadTask=null,uploadBusy=false,uploadCancelled=false;
+let db,local=[],cloud=[],tab='ALL',authUser=null,isAdmin=false,fb=null,viewURL=null,viewDoc=null,installEvent=null,loggingIn=false,activeUploadTask=null,uploadBusy=false,uploadCancelled=false,catalogUnsubscribe=null;
 const configured=()=>{const c=window.TWA_FIREBASE_CONFIG;return !!(c&&c.apiKey&&!c.apiKey.startsWith('ISI_')&&c.projectId&&!c.projectId.startsWith('ISI_')&&c.appId&&!c.appId.startsWith('ISI_'))};
 const clean=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>$('toast').style.display='none',5800)}
@@ -14,22 +14,55 @@ function tx(mode,fn){return new Promise((resolve,reject)=>{const t=db.transactio
 async function localReload(){local=await tx('readonly',s=>s.getAll());render();storageInfo()}
 function merged(){const byId=new Map(local.map(d=>[d.id,{...d,local:true}]));for(const c of cloud){byId.set(c.id,{...c,local:byId.has(c.id),file:byId.get(c.id)?.file||null})}return [...byId.values()]}
 function render(){const q=$('search').value.trim().toLowerCase(),p=$('aircraft').value;const cloudIds=new Set(cloud.map(x=>x.id));const rows=merged().filter(d=>(p==='ALL'||d.aircraft===p)&&(tab==='ALL'||d.kind===tab)&&[d.title,d.aircraft,d.revision,d.kind].join(' ').toLowerCase().includes(q)).sort((a,b)=>a.aircraft.localeCompare(b.aircraft)||['EMERGENCY','NORMAL','RFM','AFM'].indexOf(a.kind)-['EMERGENCY','NORMAL','RFM','AFM'].indexOf(b.kind)||String(b.effective).localeCompare(String(a.effective)));
-$('count').textContent=rows.length+' dokumen';$('localState').textContent='Offline: '+local.length+' PDF';$('sectionTitle').textContent=tab==='ALL'?'Katalog Flight Manuals':kinds[tab];$('syncAll').disabled=!fb||!authUser||!navigator.onLine||!cloud.length;
-$('docs').innerHTML=rows.length?rows.map(d=>{const orphan=d.local&&fb&&authUser&&!cloudIds.has(d.id);const state=orphan?'Arsip lokal — cek revisi':d.local?'✓ Offline siap':'Perlu download';const status=orphan?'old':d.local?'ready':'';return `<article class="doc ${d.kind==='EMERGENCY'?'emg':''}"><div class="doctop"><span class="docicon">${d.kind==='EMERGENCY'?'🚨':d.kind==='NORMAL'?'✅':'📘'}</span><span class="pill ${status}">${state}</span></div><div><div class="meta">${clean(d.aircraft)} · ${clean(kinds[d.kind]||d.kind)}</div><h3>${clean(d.title)}</h3><div class="meta">${clean(d.revision||'Revisi tidak dicantumkan')} · Effective: ${clean(d.effective||'-')}</div><div class="meta">${d.local?'📱 Tersimpan di perangkat':'☁️ Cloud · Belum disimpan offline'}</div></div><div class="docfoot">${d.local?`<button class="btn primary" data-act="open" data-id="${clean(d.id)}">Buka PDF</button>`:`<button class="btn good" data-act="download" data-id="${clean(d.id)}">↓ Download</button>`}<button class="btn" data-act="details" data-id="${clean(d.id)}">Detail</button>${isAdmin&&cloudIds.has(d.id)?`<button class="btn danger" data-act="removeCloud" data-id="${clean(d.id)}">Tarik dari Katalog</button>`:''}${d.local?`<button class="btn" data-act="removeLocal" data-id="${clean(d.id)}">Hapus Lokal</button>`:''}</div></article>`}).join(''):`<div class="empty">📂<h3>Belum ada dokumen tersedia</h3>${configured()?'Login dan hubungkan internet untuk melihat katalog, lalu unduh dokumen agar bisa dibuka offline.':'Konfigurasi Firebase di config.js, kemudian login untuk mengakses katalog pusat.'}</div>`;
+$('count').textContent=rows.length+' dokumen';$('localState').textContent='Offline: '+local.length+' PDF';$('sectionTitle').textContent=tab==='ALL'?'Katalog Flight Manuals':kinds[tab];$('syncAll').disabled=!fb||!navigator.onLine||!cloud.length;
+$('docs').innerHTML=rows.length?rows.map(d=>{const orphan=d.local&&fb&&navigator.onLine&&!cloudIds.has(d.id);const state=orphan?'Arsip lokal — cek revisi':d.local?'✓ Offline siap':'Perlu download';const status=orphan?'old':d.local?'ready':'';return `<article class="doc ${d.kind==='EMERGENCY'?'emg':''}"><div class="doctop"><span class="docicon">${d.kind==='EMERGENCY'?'🚨':d.kind==='NORMAL'?'✅':'📘'}</span><span class="pill ${status}">${state}</span></div><div><div class="meta">${clean(d.aircraft)} · ${clean(kinds[d.kind]||d.kind)}</div><h3>${clean(d.title)}</h3><div class="meta">${clean(d.revision||'Revisi tidak dicantumkan')} · Effective: ${clean(d.effective||'-')}</div><div class="meta">${d.local?'📱 Tersimpan di perangkat':'☁️ Cloud · Belum disimpan offline'}</div></div><div class="docfoot">${d.local?`<button class="btn primary" data-act="open" data-id="${clean(d.id)}">Buka PDF</button>`:`<button class="btn good" data-act="download" data-id="${clean(d.id)}">↓ Download</button>`}<button class="btn" data-act="details" data-id="${clean(d.id)}">Detail</button>${isAdmin&&cloudIds.has(d.id)?`<button class="btn danger" data-act="removeCloud" data-id="${clean(d.id)}">Tarik dari Katalog</button>`:''}${d.local?`<button class="btn" data-act="removeLocal" data-id="${clean(d.id)}">Hapus Lokal</button>`:''}</div></article>`}).join(''):`<div class="empty">📂<h3>Belum ada dokumen tersedia</h3>${configured()?'Pastikan internet aktif untuk melihat katalog publik. Manual yang sudah diunduh tetap dapat dibuka saat offline.':'Konfigurasi Firebase di config.js terlebih dahulu.'}</div>`;
 $('adminPanel').classList.toggle('show',isAdmin);$('adminUpload').hidden=!isAdmin;$('adminUpload').disabled=!navigator.onLine; if(isAdmin){$('roleState').textContent='Login: Admin · '+(authUser?.email||'');} else if(authUser){$('roleState').textContent='Login: Pilot · '+(authUser.email||'')+' · UID: '+authUser.uid;}
 }
 async function storageInfo(){if(!navigator.storage?.estimate)return;try{const s=await navigator.storage.estimate();const pdf=local.reduce((v,d)=>v+(d.file?.size||0),0);$('storage').textContent=`Tersimpan offline: ${local.length} PDF (${(pdf/1048576).toFixed(1)} MB) · Penggunaan situs: ${((s.usage||0)/1048576).toFixed(1)} MB · Kuota perkiraan: ${((s.quota||0)/1073741824).toFixed(2)} GB.`}catch{}}
-function connection(){const on=navigator.onLine;$('connection').textContent=on?'● Online':'● Offline';$('connection').classList.toggle('offline',!on);if(!on)$('cloudState').textContent='Cloud: offline — salinan lokal tetap tersedia';render();if(on&&fb&&authUser)refreshCloud().catch(e=>toast('Sinkronisasi: '+e.message))}
+function connection(){const on=navigator.onLine;$('connection').textContent=on?'● Online':'● Offline';$('connection').classList.toggle('offline',!on);if(!on)$('cloudState').textContent='Cloud: offline — salinan lokal tetap tersedia';render();if(on&&fb)refreshCloud().catch(e=>toast('Sinkronisasi: '+e.message))}
 async function loadFirebase(){if(!configured()){$('cloudState').textContent='Cloud: atur config.js terlebih dahulu';return}if(!navigator.onLine){$('cloudState').textContent='Cloud: perangkat sedang offline';return}try{
   const ver='10.14.1',base=`https://www.gstatic.com/firebasejs/${ver}/`;
   const [appMod,authMod,fsMod,storageMod]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js'),import(base+'firebase-storage.js')]);
   const app=appMod.initializeApp(window.TWA_FIREBASE_CONFIG);
   fb={auth:authMod,fs:fsMod,st:storageMod,authObj:authMod.getAuth(app),store:fsMod.getFirestore(app),bucket:storageMod.getStorage(app)};
   $('cloudState').textContent='Cloud: Firebase terhubung';
-  authMod.onAuthStateChanged(fb.authObj,async u=>{authUser=u;isAdmin=false;$('signIn').hidden=!!u;$('signOut').hidden=!u;$('roleState').textContent=u?'Login: '+u.email:'Mode: Offline lokal / belum login';if(u){try{const role=await fsMod.getDoc(fsMod.doc(fb.store,'users',u.uid));isAdmin=(u.uid===ADMIN_UID)||(role.exists()&&role.data().role==='admin');if(!isAdmin)console.info('Akun belum berstatus admin. UID login: '+u.uid)}catch(e){isAdmin=(u.uid===ADMIN_UID);console.warn('Role fetch:',e)}try{await refreshCloud()}catch(e){console.warn('Catalogue fetch:',e);toast('Katalog online tidak dapat dimuat: '+e.message)}}else cloud=[];render()});
+  // Katalog publik ditampilkan tanpa login. Listener aktif dan sinkron pada semua perangkat online.
+  startPublicCatalogListener();
+  authMod.onAuthStateChanged(fb.authObj,async u=>{
+    authUser=u;isAdmin=false;
+    $('signIn').hidden=!!u;$('signOut').hidden=!u;
+    $('roleState').textContent=u?'Login: '+u.email:'Pengguna · akses katalog tanpa login';
+    if(u){
+      if(u.uid===ADMIN_UID){isAdmin=true;}
+      else {
+        try{const role=await fsMod.getDoc(fsMod.doc(fb.store,'users',u.uid));isAdmin=role.exists()&&role.data().role==='admin'}
+        catch(e){console.warn('Role fetch:',e)}
+      }
+    }
+    render();
+  });
 }catch(e){$('cloudState').textContent='Cloud gagal dimuat; mode offline tetap tersedia';console.error(e);toast('Gagal menghubungkan Firebase: '+e.message)}}
-async function refreshCloud(){if(!fb||!authUser||!navigator.onLine)return;const {fs,store}=fb;const snapshot=await fs.getDocs(fs.collection(store,'manuals'));cloud=snapshot.docs.map(d=>({id:d.id,...d.data()})).filter(d=>d.active!==false);$('cloudState').textContent=`Cloud: ${cloud.length} manual tersedia`;render()}
-async function downloadDoc(d){if(!fb||!authUser||!navigator.onLine)throw Error('Login dan internet diperlukan untuk download.');const path=d.storagePath;if(!path)throw Error('Lokasi file cloud tidak ditemukan.');const {st,bucket}=fb;let blob;
+function publicManualQuery(){return fb.fs.query(fb.fs.collection(fb.store,'manuals'),fb.fs.where('active','==',true))}
+function applyCloudSnapshot(snapshot){
+  cloud=snapshot.docs.map(d=>({id:d.id,...d.data()}));
+  $('cloudState').textContent=`Cloud: ${cloud.length} manual tersedia untuk pengguna`;
+  render();
+}
+function startPublicCatalogListener(){
+  if(!fb||!navigator.onLine||catalogUnsubscribe)return;
+  $('cloudState').textContent='Cloud: memuat katalog publik…';
+  catalogUnsubscribe=fb.fs.onSnapshot(publicManualQuery(),applyCloudSnapshot,err=>{
+    console.error('Katalog publik gagal:',err);
+    $('cloudState').textContent='Katalog gagal: '+(err.code||err.message);
+    if(catalogUnsubscribe){catalogUnsubscribe();catalogUnsubscribe=null;}
+    toast('Gagal membaca katalog publik. Publish Firestore Rules V8: '+err.message);
+  });
+}
+async function refreshCloud(){
+  if(!fb||!navigator.onLine)return;
+  applyCloudSnapshot(await fb.fs.getDocs(publicManualQuery()));
+}
+async function downloadDoc(d){if(!fb||!navigator.onLine)throw Error('Internet diperlukan untuk download pertama kali.');const path=d.storagePath;if(!path)throw Error('Lokasi file cloud tidak ditemukan.');const {st,bucket}=fb;let blob;
   try{blob=await st.getBlob(st.ref(bucket,path))}catch(e){throw Error('Download gagal. Periksa Storage Rules dan konfigurasi CORS bucket. '+e.message)}
   if(!(blob instanceof Blob)||blob.size===0)throw Error('PDF kosong.');const bytes=new Uint8Array(await blob.slice(0,5).arrayBuffer());if(String.fromCharCode(...bytes)!=='%PDF-')throw Error('File cloud bukan PDF valid.');
   if(d.bytes&&blob.size!==d.bytes)throw Error('Ukuran PDF tidak sesuai dengan katalog.');
@@ -148,7 +181,7 @@ async function publish(e){
     await fs.setDoc(fs.doc(store,'manuals',id),doc);
     modal('uploadModal',false);$('uploadForm').reset();
     $('uploadProgressWrap').hidden=true;
-    toast('Manual berhasil dipublikasikan. Pilot harus mengunduh PDF untuk offline.');
+    toast('Manual berhasil dipublikasikan ke katalog publik. Setiap perangkat harus download agar offline.');
     try{await refreshCloud()}catch(err){console.warn('Katalog belum tersinkronisasi:',err)}
   }catch(err){
     console.error(err);
@@ -182,9 +215,9 @@ async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v)
   $('syncAll').onclick=downloadAll;$('signIn').onclick=()=>{if(!fb){toast('Firebase belum siap. Periksa konfigurasi dan koneksi.');return}modal('loginModal',true)};$('signOut').onclick=()=>fb&&fb.auth.signOut(fb.authObj);$('showPass').onchange=e=>$('password').type=e.target.checked?'text':'password';$('loginForm').onsubmit=async e=>{e.preventDefault();if(loggingIn)return;loggingIn=true;$('loginSubmit').disabled=true;try{await fb.auth.signInWithEmailAndPassword(fb.authObj,$('email').value.trim(),$('password').value);$('password').value='';modal('loginModal',false);toast('Login berhasil. Sinkronisasi katalog sedang berlangsung.')}catch(err){toast('Login gagal: '+err.message)}finally{loggingIn=false;$('loginSubmit').disabled=false}};
   $('newManual').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('adminUpload').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('uploadForm').onsubmit=publish;$('pdf').onchange=()=>{const f=$('pdf').files[0];$('pdfInfo').textContent=f?`${f.name} · ${bytesLabel(f.size)}. Lama upload tergantung jaringan; pantau progres di bawah.`:'Pilih PDF untuk upload.';$('uploadProgressWrap').hidden=true;$('uploadDiagnostic').hidden=true;$('storageCheckResult').hidden=true};$('cancelUpload').onclick=cancelCurrentUpload;$('storageCheck').onclick=checkStorageConnection;document.querySelectorAll('[data-close]').forEach(b=>{if(b.id!=='cancelUpload')b.onclick=()=>{if(b.dataset.close==='uploadModal'&&uploadBusy)return toast('Batalkan upload terlebih dahulu.');modal(b.dataset.close,false)}});$('back').onclick=closeViewer;$('openNative').onclick=()=>{if(!viewDoc)return;const u=URL.createObjectURL(viewDoc.file),w=window.open(u,'_blank');if(!w)toast('Izinkan pop-up atau gunakan Simpan PDF.');setTimeout(()=>URL.revokeObjectURL(u),120000)};$('savePdf').onclick=savePdf;
   $('persistent').onclick=async()=>{if(!navigator.storage?.persist)return toast('Browser ini tidak mendukung persistent storage.');toast(await navigator.storage.persist()?'Persistent storage disetujui. Tetap siapkan backup.':'Belum diizinkan browser. Periksa storage dan uji offline.')};
-  $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Login saat online.\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
+  $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Buka aplikasi saat online (tanpa login).\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
   $('export').onclick=()=>{const data=merged().map(({file,...d})=>d);const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='TWA-manual-inventory.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),3000)};
   $('install').onclick=async()=>{if(installEvent){installEvent.prompt();await installEvent.userChoice;installEvent=null}else alert('iPhone: Safari → Share → Add to Home Screen.\nAndroid: Chrome → Menu → Install app / Add to Home screen.\nDesktop: gunakan ikon Install pada address bar.')} ;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});
-  window.addEventListener('online',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi kembali — Firebase melanjutkan upload…';if(!fb)loadFirebase()});window.addEventListener('offline',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi internet terputus — upload menunggu jaringan';});document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
+  window.addEventListener('online',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi kembali — Firebase melanjutkan upload…';if(!fb)loadFirebase();else if(!catalogUnsubscribe)startPublicCatalogListener()});window.addEventListener('offline',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi internet terputus — upload menunggu jaringan';});document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
 }
 init().catch(e=>{console.error(e);$('docs').innerHTML='<div class="empty">Tidak dapat menggunakan penyimpanan browser. Gunakan mode browser biasa (bukan Private), aktifkan penyimpanan situs, kemudian coba kembali.</div>'});

@@ -2,15 +2,35 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function admin() { return signedIn() && request.auth.uid == 'uKTUIiuS3rQcRcmFLhliufbOcds1'; }
+    function manualAdmin() { return signedIn() && request.auth.uid == 'uKTUIiuS3rQcRcmFLhliufbOcds1'; }
+
+    // Existing EGR rules kept unchanged.
+    match /publicData/fleet { allow read, write: if true; }
+    match /publicSettings/emailReminder { allow read, write: if true; }
+    match /pushSubscriptions/{id} {
+      allow create, update: if request.resource.data.keys().hasOnly(['token','enabled','updatedAt','platform'])
+        && request.resource.data.token is string
+        && request.resource.data.token.size() < 4096
+        && request.resource.data.enabled == true
+        && request.resource.data.updatedAt is string;
+      allow read, delete: if false;
+    }
+    match /users/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || manualAdmin());
+      allow list, create, update, delete: if false;
+    }
     match /manuals/{manualId} {
-      allow get, list: if signedIn();
-      allow create: if admin() && request.resource.data.active == true
+      // Public query MUST include where('active','==',true).
+      allow get, list: if resource.data.active == true || manualAdmin();
+      allow create: if manualAdmin()
+        && request.resource.data.active == true
         && request.resource.data.uploadedBy == request.auth.uid
         && request.resource.data.storagePath == 'manuals/' + manualId + '.pdf';
-      allow update: if admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active','withdrawnAt'])
+      allow update: if manualAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active','withdrawnAt'])
         && request.resource.data.active == false;
       allow delete: if false;
     }
+    match /{document=**} { allow read, write: if false; }
   }
 }
