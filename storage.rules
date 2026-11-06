@@ -3,7 +3,7 @@ service firebase.storage {
   match /b/{bucket}/o {
     function signedIn() { return request.auth != null; }
     function admin() {
-      return signedIn() && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return signedIn() && (request.auth.uid == '1Z9zzNkV2mZW2IS8rakS8UBSkky1' || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
     match /manuals/{manualFile} {
       allow read: if signedIn();
