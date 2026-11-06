@@ -61,31 +61,44 @@ async function publish(e){
   const btn=$('publish');uploadBusy=true;uploadCancelled=false;btn.disabled=true;
   const id=crypto.randomUUID(), storagePath='manuals/'+id+'.pdf';let uploaded=false;
   $('cancelUpload').textContent='Batalkan Upload';
-  setUploadProgress(0,'Memeriksa integritas PDF…',`${bytesLabel(file.size)} · Mohon tetap buka halaman ini`);
+  setUploadProgress(0,'Menghubungkan ke Firebase Storage…',`${bytesLabel(file.size)} · Menunggu respons Firebase`);
   try{
-    if(!crypto.subtle)throw Error('Browser tidak mendukung SHA-256. Gunakan browser terbaru.');
-    // Hash is required for safe offline download; indicate it separately from network upload.
-    const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
-    if(uploadCancelled)throw Error('Upload dibatalkan.');
-    const sha256=[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
-    const {st,bucket,fs,store}=fb;btn.textContent='Mengunggah 0%';
-    setUploadProgress(0,'Mengirim PDF ke Firebase Storage…',`0 / ${bytesLabel(file.size)} · 0%`);
-    const started=performance.now();let lastUpdate=0;
+    const {st,bucket,fs,store}=fb;btn.textContent='Menghubungkan…';
+    // Start actual transfer first. Computing a 40+ MB hash before transfer used
+    // to make the progress indicator appear stuck at 0%.
+    const started=performance.now();let lastUpdate=0,lastBytes=-1;
     await new Promise((resolve,reject)=>{
-      const task=st.uploadBytesResumable(st.ref(bucket,storagePath),file,{contentType:'application/pdf'});
-      activeUploadTask=task;
-      task.on('state_changed',snap=>{
-        const now=performance.now();if(now-lastUpdate<200 && snap.bytesTransferred<snap.totalBytes)return;
-        lastUpdate=now;
-        const pct=snap.totalBytes?Math.round(snap.bytesTransferred*100/snap.totalBytes):0;
-        const rate=snap.bytesTransferred/Math.max(1,(now-started)/1000);
-        btn.textContent=`Mengunggah ${pct}%`;
-        const state=snap.state==='paused'?'Upload dijeda oleh koneksi…':'Mengirim PDF ke Firebase Storage…';
-        setUploadProgress(pct,state,`${bytesLabel(snap.bytesTransferred)} / ${bytesLabel(snap.totalBytes)} · ${pct}% · ${bytesLabel(rate)}/detik`);
-      },err=>reject(err),()=>resolve());
+      let warningTimer=null;
+      try {
+        const task=st.uploadBytesResumable(st.ref(bucket,storagePath),file,{contentType:'application/pdf'});
+        activeUploadTask=task;
+        warningTimer=setTimeout(()=>{
+          if(task.snapshot.bytesTransferred===0){
+            setUploadProgress(0,navigator.onLine?'Menunggu koneksi Firebase — belum ada data terkirim':'Koneksi terputus — upload terhenti',
+              `0 / ${bytesLabel(file.size)} · Periksa internet, Storage Rules, dan izin bucket`);
+          }
+        },15000);
+        task.on('state_changed',snap=>{
+          const now=performance.now();
+          if(now-lastUpdate<180 && snap.bytesTransferred<snap.totalBytes && snap.bytesTransferred===lastBytes)return;
+          lastUpdate=now;lastBytes=snap.bytesTransferred;
+          const pct=snap.totalBytes?Math.floor(snap.bytesTransferred*100/snap.totalBytes):0;
+          const rate=snap.bytesTransferred/Math.max(1,(now-started)/1000);
+          btn.textContent=`Mengunggah ${pct}%`;
+          const state=!navigator.onLine?'Jaringan offline — menunggu koneksi':snap.state==='paused'?'Upload dijeda — menunggu Firebase':snap.bytesTransferred===0?'Menunggu respons Firebase…':'Mengunggah PDF ke Firebase Storage…';
+          setUploadProgress(pct,state,`${bytesLabel(snap.bytesTransferred)} / ${bytesLabel(snap.totalBytes)} · ${pct}% · rata-rata ${bytesLabel(rate)}/detik`);
+        },err=>{clearTimeout(warningTimer);reject(err)},()=>{clearTimeout(warningTimer);resolve()});
+      }catch(err){clearTimeout(warningTimer);reject(err)}
     });
     activeUploadTask=null;uploaded=true;
     if(uploadCancelled)throw Error('Upload dibatalkan setelah file terkirim; belum diterbitkan ke katalog.');
+    setUploadProgress(100,'Upload terkirim 100%. Memverifikasi checksum PDF…',`${bytesLabel(file.size)} terkirim · sedang memeriksa integritas`);
+    btn.textContent='Memverifikasi file…';
+    if(!crypto.subtle)throw Error('Browser tidak mendukung SHA-256. Gunakan browser terbaru.');
+    // Allow browser to paint the 100% state before hashing a large PDF.
+    await new Promise(resolve=>setTimeout(resolve,30));
+    const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+    const sha256=[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
     setUploadProgress(100,'Upload selesai. Menyimpan data katalog…',`${bytesLabel(file.size)} terkirim · 100%`);
     btn.textContent='Menerbitkan katalog…';
     const doc={aircraft:$('plane').value,kind:$('kind').value,title:$('title').value.trim(),revision:$('revision').value.trim(),effective:$('effective').value,filename:file.name,bytes:file.size,sha256,storagePath,active:true,uploadedBy:authUser.uid,uploadedAt:fs.serverTimestamp()};
@@ -116,6 +129,6 @@ async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v)
   $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Login saat online.\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
   $('export').onclick=()=>{const data=merged().map(({file,...d})=>d);const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='TWA-manual-inventory.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),3000)};
   $('install').onclick=async()=>{if(installEvent){installEvent.prompt();await installEvent.userChoice;installEvent=null}else alert('iPhone: Safari → Share → Add to Home Screen.\nAndroid: Chrome → Menu → Install app / Add to Home screen.\nDesktop: gunakan ikon Install pada address bar.')} ;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});
-  window.addEventListener('online',()=>{connection();if(!fb)loadFirebase()});window.addEventListener('offline',connection);document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
+  window.addEventListener('online',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi kembali — Firebase melanjutkan upload…';if(!fb)loadFirebase()});window.addEventListener('offline',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi internet terputus — upload menunggu jaringan';});document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
 }
 init().catch(e=>{console.error(e);$('docs').innerHTML='<div class="empty">Tidak dapat menggunakan penyimpanan browser. Gunakan mode browser biasa (bukan Private), aktifkan penyimpanan situs, kemudian coba kembali.</div>'});

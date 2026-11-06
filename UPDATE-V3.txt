@@ -1,0 +1,8 @@
+VERSI 3 - PERBAIKAN UPLOAD 0%
+1. Upload seluruh isi folder ke GitHub Pages.
+2. Tutup aplikasi dan buka lagi saat online; lakukan hard refresh Ctrl+Shift+R.
+3. Jika tetap versi lama: DevTools > Application > Service Workers > Update/Unregister, lalu reload. Jangan hapus Site Data karena PDF offline tersimpan di IndexedDB.
+4. Pengiriman mulai segera dan checksum SHA-256 diverifikasi setelah transfer, sebelum dokumen diterbitkan ke katalog.
+5. Jika 0% lebih dari 15 detik, aplikasi menampilkan petunjuk periksa internet/Firebase Storage Rules.
+6. Pastikan Firebase Storage Rules aman; wildcard Firestore lama memungkinkan baca/tulis publik sampai 5 Desember 2026.
+7. Test offline dan revisi dokumen sebelum penggunaan operasional penerbangan.
