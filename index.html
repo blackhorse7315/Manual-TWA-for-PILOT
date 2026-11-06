@@ -19,6 +19,16 @@
 .viewer.native .viewbody #pageCanvas{display:none}
 .viewer.native .viewbody .results{display:none}
 .viewer.native .viewbody .viewstage{padding:0}
+.viewer{height:100vh;height:100dvh;max-height:100dvh;min-height:0;overflow:hidden}
+.viewer:fullscreen,.viewer:-webkit-full-screen{height:100%;max-height:none}
+.viewer .viewbody{height:0;min-height:0;flex:1 1 auto}
+.viewer .viewstage{height:100%;min-height:0;display:flex;flex-direction:column;align-items:center}
+.viewer.native .viewbody .viewstage{overflow:hidden;display:block;height:100%;min-height:0}
+.viewer.native .viewbody iframe{display:block;width:100%;height:100%;min-height:100%;max-height:100%;border:0;flex:none}
+.viewer #pageCanvas{flex:0 0 auto}
+.viewer.focus-mode .viewhead{padding:4px 8px}
+.viewer.focus-mode .viewtools{padding:4px 8px}
+@supports(height:100dvh){.viewer{height:100dvh}}
 .viewer #searchStatus{font-size:12px;color:#b3d8ff;padding:0 6px}
 @media(max-width:700px){.viewer .results{width:130px;max-width:38%}.viewer .result{font-size:11px;padding:7px}.viewer .viewhead .btn{padding:6px}.viewer .viewstage{padding:7px}.viewer .viewtools{gap:5px;padding:6px}.viewer .viewtools input{min-width:90px}}
 </style></head><body><header><div class="inner"><div class="brand"><img src="./icon-192.png" alt="Logo aplikasi"><div><strong>TRANSWISATA</strong><small>FLIGHT MANUALS · PREVIEW & OFFLINE</small></div></div><span id="connection" class="indicator">Memeriksa</span></div></header>
@@ -36,4 +46,4 @@
 <div class="viewhead"><button id="back" class="btn">← Kembali</button><span id="viewTitle" class="viewtitle">Manual</span><button id="viewerFullscreen" class="btn" type="button" aria-label="Aktifkan fullscreen preview" aria-pressed="false" title="Fullscreen (F)">⛶ Fullscreen</button><button id="viewerOffline" class="btn good">↓ Make Offline</button><button id="openNative" class="btn">PDF Asli</button><button id="savePdf" class="btn">Simpan PDF</button></div>
 <div class="viewtools"><button id="pagePrev" class="btn" aria-label="Halaman sebelumnya">◀</button><input id="pageNum" type="number" min="1" value="1" style="max-width:70px" aria-label="Nomor halaman"><span id="pageTotal">/ –</span><button id="pageNext" class="btn" aria-label="Halaman berikutnya">▶</button><button id="zoomOut" class="btn">−</button><span id="zoomValue">100%</span><button id="zoomIn" class="btn">+</button><input id="pdfSearch" type="search" placeholder="Cari teks dalam PDF…" aria-label="Pencarian isi PDF"><button id="findPdf" class="btn primary">Cari</button><button id="stopSearch" class="btn">Stop</button><span id="searchStatus" aria-live="polite"></span></div>
 <div class="viewbody"><div class="viewstage" id="viewStage"><canvas id="pageCanvas"></canvas><iframe id="pdfFrame" title="PDF Manual"></iframe></div><aside class="results" id="pdfResults" aria-label="Hasil pencarian"><h4>Hasil Pencarian</h4><div id="pdfHits" class="hint" style="padding:12px">Ketik kata atau frasa, lalu tekan Cari. Pilih hasil untuk menuju halaman terkait.</div></aside></div>
-<p id="previewHint">Gunakan Make Offline agar manual tersimpan di perangkat. Pencarian bekerja pada PDF dengan teks yang dapat dipilih; PDF hasil scan mungkin memerlukan OCR.</p></div><div id="toast" role="status"></div><script src="./config.js?v=16"></script><script src="./app.js?v=16"></script></body></html>
+<p id="previewHint">Gunakan Make Offline agar manual tersimpan di perangkat. Pencarian bekerja pada PDF dengan teks yang dapat dipilih; PDF hasil scan mungkin memerlukan OCR.</p></div><div id="toast" role="status"></div><script src="./config.js?v=17"></script><script src="./app.js?v=17"></script></body></html>
