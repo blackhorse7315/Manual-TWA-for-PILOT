@@ -51,6 +51,41 @@ function cancelCurrentUpload(){
   if(activeUploadTask){activeUploadTask.cancel();$('uploadStatus').textContent='Membatalkan upload…'}
   else $('uploadStatus').textContent='Pembatalan diminta…';
 }
+async function checkStorageConnection(){
+  const panel=$('storageCheckResult'),button=$('storageCheck');
+  panel.hidden=false;button.disabled=true;
+  const steps=[];
+  const show=()=>{panel.textContent=steps.join('\n')};
+  try{
+    if(!navigator.onLine)throw Error('OFFLINE: browser melaporkan tidak ada koneksi internet.');
+    if(!fb||!authUser)throw Error('Belum login atau Firebase SDK belum dimuat.');
+    steps.push('Project: '+window.TWA_FIREBASE_CONFIG.projectId);
+    steps.push('Bucket konfigurasi: '+window.TWA_FIREBASE_CONFIG.storageBucket);
+    steps.push('UID aktif: '+authUser.uid);
+    steps.push('1/3 Authentication: memeriksa sesi…');show();
+    const token=await Promise.race([authUser.getIdToken(false),new Promise((_,reject)=>setTimeout(()=>reject(Error('Timeout meminta Firebase Auth token (12 detik)')),12000))]);
+    if(!token)throw Error('Token login kosong.');
+    steps[steps.length-1]='1/3 Authentication: OK (token tersedia; tidak ditampilkan)';show();
+    steps.push('2/3 Endpoint Storage: memeriksa respons server…');show();
+    const url='https://firebasestorage.googleapis.com/v0/b/'+encodeURIComponent(window.TWA_FIREBASE_CONFIG.storageBucket)+'/o/'+encodeURIComponent('manuals/__twa_storage_check_nonexistent__.pdf');
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),14000);
+    let r;
+    try{r=await fetch(url,{method:'GET',headers:{Authorization:'Firebase '+token},signal:controller.signal,cache:'no-store'});}finally{clearTimeout(timer)}
+    let message='';try{const body=await r.json();message=String(body?.error?.message||body?.error?.status||'').slice(0,250)}catch{}
+    steps[steps.length-1]=`2/3 Endpoint Storage: HTTP ${r.status}${message?' — '+message:''}`;show();
+    steps.push('3/3 Hasil: '); 
+    if(r.status===404){steps[steps.length-1]+='Server merespons, objek tes memang tidak ada. Bucket dan koneksi kemungkinan OK. Upload tetap memerlukan izin create pada Storage Rules.';}
+    else if(r.status===401||r.status===403){steps[steps.length-1]+='Akses ditolak. Periksa Rules Storage, user login, dan IAM/billing bucket. Jangan gunakan allow write: if true.';}
+    else if(r.status===402){steps[steps.length-1]+='Storage tidak dapat digunakan karena masalah billing. Periksa status akun penagihan.';}
+    else if(r.status===400){steps[steps.length-1]+='Permintaan tidak diterima. Periksa nama bucket di Storage → Files dan konfigurasi aplikasi.';}
+    else if(r.ok){steps[steps.length-1]+='Endpoint memberi respons berhasil, namun path tes mungkin sudah ada.';}
+    else{steps[steps.length-1]+='Ada masalah endpoint/bucket. Lihat pesan HTTP di atas dan Storage → Files.';}
+    show();
+  }catch(e){
+    const explanation=e.name==='AbortError'?'Timeout 14 detik saat menghubungi endpoint. Periksa jaringan, pemblokir koneksi/ekstensi, atau bucket Firebase.':e.message;
+    steps.push('GAGAL: '+explanation);show();
+  }finally{button.disabled=false}
+}
 async function publish(e){
   e.preventDefault();if(uploadBusy)return;
   if(!isAdmin||!authUser||!navigator.onLine){toast('Hanya admin online yang boleh upload.');return}
@@ -71,10 +106,10 @@ async function publish(e){
     // Avoid silently waiting several minutes for a failed backend request.
     // Firebase modular SDK 10.x: retry limits are writable properties on the Storage instance.
     // The old st.setMaxUploadRetryTime(...) call threw TypeError before upload started.
-    bucket.maxUploadRetryTime = 30000;
-    bucket.maxOperationRetryTime = 15000;
+    bucket.maxUploadRetryTime = 120000;
+    bucket.maxOperationRetryTime = 30000;
     const diagnosticBase=`Bucket: ${window.TWA_FIREBASE_CONFIG.storageBucket} | UID: ${authUser.uid}`;
-    setUploadProgress(0,'Menghubungkan ke Storage… (maks. 30 detik untuk diagnosis)',diagnosticBase);
+    setUploadProgress(0,'Menghubungkan ke Storage… (batas percobaan 120 detik)',diagnosticBase);
     await new Promise((resolve,reject)=>{
       let warningTimer=null;
       try {
@@ -121,7 +156,7 @@ async function publish(e){
     const code=err.code||'unknown';
     const status=err.customData?.serverResponse||'';
     const diagnosis=code==='storage/unauthorized'?'Akses Storage ditolak. Periksa Storage Rules dan UID Admin.':
-      code==='storage/retry-limit-exceeded'?'Koneksi Storage tidak merespons hingga batas percobaan. Periksa billing Blaze, bucket, jaringan dan DevTools Network.':
+      code==='storage/retry-limit-exceeded'?'Storage tidak memberi respons hingga batas percobaan. Gunakan tombol Tes Koneksi Storage; periksa apakah bucket sudah dibuat di Storage → Files, serta jaringan dan Storage Rules.':
       code==='storage/bucket-not-found'?'Bucket tidak ditemukan. Bandingkan nama bucket dengan Firebase Console → Storage → Files.':
       code==='storage/quota-exceeded'?'Kuota atau billing Storage bermasalah. Periksa paket Blaze dan Billing.':
       code==='storage/unauthenticated'?'Sesi Firebase Authentication tidak berlaku. Logout lalu login kembali.':
@@ -145,7 +180,7 @@ async function actions(e){const button=e.target.closest('[data-act]');if(!button
 async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v));if(v!=='ALL')$('plane').add(new Option(l,v))});db=await idb();await localReload();connection();if('serviceWorker'in navigator&&location.protocol!=='file:'){try{await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('shellStatus').textContent='App shell siap untuk offline (pastikan uji buka ulang dengan mode pesawat).'}catch(e){$('shellStatus').textContent='Service Worker belum siap: '+e.message}}else $('shellStatus').textContent='Gunakan HTTPS (misalnya GitHub Pages) untuk instalasi PWA dan offline.';
   $('search').oninput=render;$('aircraft').onchange=render;$('docs').onclick=actions;$('tabs').onclick=e=>{const b=e.target.closest('[data-tab]');if(!b)return;tab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('selected',x===b));render()};
   $('syncAll').onclick=downloadAll;$('signIn').onclick=()=>{if(!fb){toast('Firebase belum siap. Periksa konfigurasi dan koneksi.');return}modal('loginModal',true)};$('signOut').onclick=()=>fb&&fb.auth.signOut(fb.authObj);$('showPass').onchange=e=>$('password').type=e.target.checked?'text':'password';$('loginForm').onsubmit=async e=>{e.preventDefault();if(loggingIn)return;loggingIn=true;$('loginSubmit').disabled=true;try{await fb.auth.signInWithEmailAndPassword(fb.authObj,$('email').value.trim(),$('password').value);$('password').value='';modal('loginModal',false);toast('Login berhasil. Sinkronisasi katalog sedang berlangsung.')}catch(err){toast('Login gagal: '+err.message)}finally{loggingIn=false;$('loginSubmit').disabled=false}};
-  $('newManual').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('adminUpload').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('uploadForm').onsubmit=publish;$('pdf').onchange=()=>{const f=$('pdf').files[0];$('pdfInfo').textContent=f?`${f.name} · ${bytesLabel(f.size)}. Lama upload tergantung jaringan; pantau progres di bawah.`:'Pilih PDF untuk upload.';$('uploadProgressWrap').hidden=true;$('uploadDiagnostic').hidden=true};$('cancelUpload').onclick=cancelCurrentUpload;document.querySelectorAll('[data-close]').forEach(b=>{if(b.id!=='cancelUpload')b.onclick=()=>{if(b.dataset.close==='uploadModal'&&uploadBusy)return toast('Batalkan upload terlebih dahulu.');modal(b.dataset.close,false)}});$('back').onclick=closeViewer;$('openNative').onclick=()=>{if(!viewDoc)return;const u=URL.createObjectURL(viewDoc.file),w=window.open(u,'_blank');if(!w)toast('Izinkan pop-up atau gunakan Simpan PDF.');setTimeout(()=>URL.revokeObjectURL(u),120000)};$('savePdf').onclick=savePdf;
+  $('newManual').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('adminUpload').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('uploadForm').onsubmit=publish;$('pdf').onchange=()=>{const f=$('pdf').files[0];$('pdfInfo').textContent=f?`${f.name} · ${bytesLabel(f.size)}. Lama upload tergantung jaringan; pantau progres di bawah.`:'Pilih PDF untuk upload.';$('uploadProgressWrap').hidden=true;$('uploadDiagnostic').hidden=true;$('storageCheckResult').hidden=true};$('cancelUpload').onclick=cancelCurrentUpload;$('storageCheck').onclick=checkStorageConnection;document.querySelectorAll('[data-close]').forEach(b=>{if(b.id!=='cancelUpload')b.onclick=()=>{if(b.dataset.close==='uploadModal'&&uploadBusy)return toast('Batalkan upload terlebih dahulu.');modal(b.dataset.close,false)}});$('back').onclick=closeViewer;$('openNative').onclick=()=>{if(!viewDoc)return;const u=URL.createObjectURL(viewDoc.file),w=window.open(u,'_blank');if(!w)toast('Izinkan pop-up atau gunakan Simpan PDF.');setTimeout(()=>URL.revokeObjectURL(u),120000)};$('savePdf').onclick=savePdf;
   $('persistent').onclick=async()=>{if(!navigator.storage?.persist)return toast('Browser ini tidak mendukung persistent storage.');toast(await navigator.storage.persist()?'Persistent storage disetujui. Tetap siapkan backup.':'Belum diizinkan browser. Periksa storage dan uji offline.')};
   $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Login saat online.\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
   $('export').onclick=()=>{const data=merged().map(({file,...d})=>d);const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='TWA-manual-inventory.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),3000)};
