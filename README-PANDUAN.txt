@@ -18,3 +18,12 @@ VERSI ADMIN UPLOAD V2
 - Publish juga aturan Firestore dan Storage untuk memberikan hak tulis sesuai UID; gabungkan dengan aturan project yang sudah ada, jangan replace seluruh rules.
 - Perhatian: wildcard Firestore publik sementara sampai 5 Des 2026 membuat semua dokumen bisa dibaca dan ditulis publik; wajib diamankan sebelum digunakan operasional.
 - Setelah deploy, lakukan refresh paksa agar service worker versi baru terpasang.
+
+VERSI UPLOAD PROGRESS
+- Admin Upload PDF menggunakan Firebase Storage resumable upload dengan indikator persentase, ukuran terkirim, dan laju transfer.
+- Tombol Batalkan Upload tersedia ketika proses berlangsung.
+- Pemeriksaan SHA-256 dilakukan sebelum upload (terutama PDF besar dapat memerlukan waktu).
+- Kecepatan bergantung pada jaringan, ukuran PDF, dan konfigurasi Firebase Storage.
+- Jangan keluar dari halaman sampai status upload dan publikasi katalog selesai.
+- Jika muncul storage/unauthorized atau error CORS, periksa rules dan bucket Firebase; ini bukan masalah kecepatan.
+- Pastikan Storage Rules dan Firestore Rules diamankan sebelum dipakai operasional.
