@@ -1,10 +1,10 @@
-// Firebase Web App configuration (public client identifiers, not admin credentials).
+// Firebase Web configuration for Transwisata Flight Manuals (transwisata-egr).
 window.TWA_FIREBASE_CONFIG = {
-  "apiKey": "AIzaSyD1lOduspyEcs3QxGQhplkOtVA0WQID_TM",
-  "authDomain": "cuti-apps-twa.firebaseapp.com",
-  "projectId": "cuti-apps-twa",
-  "storageBucket": "cuti-apps-twa.firebasestorage.app",
-  "messagingSenderId": "460990981144",
-  "appId": "1:460990981144:web:27870e09c3f7171e4ecf6d",
-  "measurementId": "G-LEWMVH32NS"
+  "apiKey": "AIzaSyCOPkYR0oB5NT9f9hjyqQqe2GbkjoRBmhE",
+  "authDomain": "transwisata-egr.firebaseapp.com",
+  "projectId": "transwisata-egr",
+  "storageBucket": "transwisata-egr.firebasestorage.app",
+  "messagingSenderId": "946316205686",
+  "appId": "1:946316205686:web:983f8fa8f29a2552e14957",
+  "measurementId": "G-QPMR20K0XF"
 };

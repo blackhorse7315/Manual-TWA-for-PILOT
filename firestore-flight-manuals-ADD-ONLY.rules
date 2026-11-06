@@ -1,0 +1,18 @@
+// Add inside existing service cloud.firestore > match /databases/{database}/documents.
+// Do not replace existing transwisata-egr Firestore rules.
+function flightManualSignedIn() { return request.auth != null; }
+function flightManualAdmin() {
+  return flightManualSignedIn() &&
+    request.auth.uid == 'uKTUIiuS3rQcRcmFLhliufbOcds1';
+}
+match /manuals/{manualId} {
+  allow get, list: if flightManualSignedIn();
+  allow create: if flightManualAdmin()
+    && request.resource.data.active == true
+    && request.resource.data.uploadedBy == request.auth.uid
+    && request.resource.data.storagePath == 'manuals/' + manualId + '.pdf';
+  allow update: if flightManualAdmin()
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active','withdrawnAt'])
+    && request.resource.data.active == false;
+  allow delete: if false;
+}
