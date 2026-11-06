@@ -69,8 +69,10 @@ async function publish(e){
     // to make the progress indicator appear stuck at 0%.
     const started=performance.now();let lastUpdate=0,lastBytes=-1;
     // Avoid silently waiting several minutes for a failed backend request.
-    st.setMaxUploadRetryTime(30000);
-    if(st.setMaxOperationRetryTime)st.setMaxOperationRetryTime(15000);
+    // Firebase modular SDK 10.x: retry limits are writable properties on the Storage instance.
+    // The old st.setMaxUploadRetryTime(...) call threw TypeError before upload started.
+    bucket.maxUploadRetryTime = 30000;
+    bucket.maxOperationRetryTime = 15000;
     const diagnosticBase=`Bucket: ${window.TWA_FIREBASE_CONFIG.storageBucket} | UID: ${authUser.uid}`;
     setUploadProgress(0,'Menghubungkan ke Storage… (maks. 30 detik untuk diagnosis)',diagnosticBase);
     await new Promise((resolve,reject)=>{
