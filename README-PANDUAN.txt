@@ -64,3 +64,14 @@ PENTING UNTUK PROJECT cuti-apps-twa YANG DIPAKAI BERSAMA:
 - Aplikasi lain dalam project dapat terganggu jika aturan /users atau rules seluruh project ditimpa.
 - Firebase config sudah diisi tetapi BELUM membuktikan layanan diaktifkan atau rules terpasang.
 - Logo aplikasi sudah diganti mengikuti rancangan Transwisata Flight Manuals.
+
+
+UPDATE MENU ADMIN - 06 NOVEMBER 2026
+================================
+- Setelah login sebagai admin, tombol '+ Admin · Upload PDF' muncul pada bar atas.
+- Menu Admin Document Control juga memuat tombol Upload Manual Baru.
+- Upload memilih pesawat, jenis RFM/AFM/Normal/Emergency, judul, revisi, effective date, dan file PDF.
+- UID admin pada Firebase Authentication harus memiliki dokumen users/{UID} dengan field string role = admin.
+- Untuk UID yang diberikan: users/1Z9zzNkV2mZW2IS8rakS8UBSkky1, role = admin.
+- Firebase Storage dan Firestore Rules juga harus sudah dikonfigurasi secara aman; jangan timpa aturan lain di project cuti-apps-twa.
+- Sebelum operasi penerbangan, uji offline serta revisi manual pada setiap perangkat.
