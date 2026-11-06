@@ -5,6 +5,56 @@ const kinds={RFM:'RFM',AFM:'AFM',NORMAL:'Normal Checklist',EMERGENCY:'Emergency 
 // UID Admin khusus yang telah ditetapkan untuk project transwisata-egr.
 const ADMIN_UID='uKTUIiuS3rQcRcmFLhliufbOcds1';
 let pdfObject=null,pdfLib=null,previewToken=0,searchToken=0,previewPage=1,previewScale=1,pdfBlob=null,searchMatches=[],renderToken=0,pdfAssetUrls=[],db,local=[],cloud=[],tab='ALL',authUser=null,isAdmin=false,fb=null,viewURL=null,viewDoc=null,installEvent=null,loggingIn=false,activeUploadTask=null,uploadBusy=false,uploadCancelled=false,catalogUnsubscribe=null;
+// Capture install eligibility immediately. The event may fire while Firebase/IndexedDB initialize.
+let appInstallDismissed=false;
+function isStandaloneApp(){
+  return Boolean(window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.matchMedia?.('(display-mode: fullscreen)').matches ||
+    navigator.standalone === true);
+}
+function refreshInstallButton(){
+  const b=$('install'); if(!b)return;
+  const installed=isStandaloneApp();
+  b.hidden=installed;
+  b.disabled=false;
+  b.textContent=installEvent?'⬇ Install App':'Install App';
+  b.title=installed?'Aplikasi sudah berjalan dalam mode terpasang':
+    installEvent?'Pasang aplikasi melalui konfirmasi browser':'Lihat petunjuk instalasi perangkat';
+}
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  installEvent=e;
+  refreshInstallButton();
+});
+window.addEventListener('appinstalled',()=>{
+  installEvent=null; appInstallDismissed=false;
+  refreshInstallButton();
+  toast('Aplikasi berhasil dipasang. Buka melalui ikon di Home Screen atau desktop.');
+});
+window.matchMedia?.('(display-mode: standalone)').addEventListener?.('change',refreshInstallButton);
+async function requestAppInstallation(){
+  if(isStandaloneApp()){refreshInstallButton();return;}
+  if(installEvent){
+    const event=installEvent;
+    installEvent=null;
+    try{
+      await event.prompt();
+      const result=await event.userChoice;
+      if(result?.outcome==='accepted') toast('Permintaan instalasi diterima. Periksa ikon aplikasi di perangkat.');
+      else {appInstallDismissed=true;toast('Instalasi dibatalkan. Gunakan menu browser untuk memasang aplikasi.');}
+    }catch(err){console.warn('PWA install prompt failed:',err);showInstallInstructions();}
+    refreshInstallButton();
+    return;
+  }
+  showInstallInstructions();
+}
+function showInstallInstructions(){
+  const ios=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const secure=location.protocol==='https:'||location.hostname==='localhost';
+  if(!secure){alert('Aplikasi harus dibuka melalui HTTPS (misalnya GitHub Pages) agar bisa dipasang sebagai PWA.');return;}
+  if(ios){alert('Instalasi iPhone/iPad membutuhkan tindakan pengguna. Buka di Safari → tombol Share (Bagikan) → Add to Home Screen (Tambahkan ke Layar Utama) → Add.');return;}
+  alert('Browser belum menawarkan prompt instalasi otomatis. Android: Chrome → menu ⋮ → Install app / Add to Home screen. Desktop: Chrome/Edge → ikon Install pada bilah alamat atau menu ⋮ → Install app. Pastikan aplikasi belum terinstal dan fitur PWA didukung browser.');
+}
 const configured=()=>{const c=window.TWA_FIREBASE_CONFIG;return !!(c&&c.apiKey&&!c.apiKey.startsWith('ISI_')&&c.projectId&&!c.projectId.startsWith('ISI_')&&c.appId&&!c.appId.startsWith('ISI_'))};
 const clean=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>$('toast').style.display='none',5800)}
@@ -306,7 +356,8 @@ async function renderPdfPage(pageNo){
   if(token!==renderToken)return;
   const stage=$('viewStage');
   const base=page.getViewport({scale:1});
-  const fit=Math.max(.25,(stage.clientWidth-30)/base.width);
+  const immersive=$('viewer').classList.contains('mobile-immersive');
+  const fit=Math.max(.25,(stage.clientWidth-(immersive?0:20))/base.width);
   const scale=fit*previewScale;
   const viewport=page.getViewport({scale});
   const canvas=$('pageCanvas');
@@ -316,7 +367,7 @@ async function renderPdfPage(pageNo){
   const context=canvas.getContext('2d');
   await page.render({canvasContext:context,viewport,transform:ratio!==1?[ratio,0,0,ratio,0,0]:null}).promise;
   if(token!==renderToken)return;
-  previewPage=pageNo;$('pageNum').value=pageNo;$('pageTotal').textContent='/ '+pdfObject.numPages;
+  previewPage=pageNo;$('pageNum').value=pageNo;$('pageTotal').textContent='/ '+pdfObject.numPages;updateImmersivePage();
   $('zoomValue').textContent=Math.round(previewScale*100)+'%';
   stage.scrollTo({left:0,top:0});
 }
@@ -367,7 +418,7 @@ async function openDoc(d){
   setPreviewStatus('Membuka preview PDF…');
   $('pageTotal').textContent='/ –';$('pageNum').value=1;
   const localDoc=local.find(x=>x.id===d.id);
-  $('viewerOffline').hidden=!!localDoc;
+  $('viewerOffline').hidden=!!localDoc;updateImmersivePage();
   try{
     let blob=localDoc?.file||null;
     if(viewURL){URL.revokeObjectURL(viewURL);viewURL=null}
@@ -421,6 +472,19 @@ async function openDoc(d){
 }
 // Fullscreen is initiated only by a user gesture. iOS Safari may not support
 // requestFullscreen on arbitrary elements; offer a focus-mode fallback.
+function updateImmersivePage(){
+  const element=$('immersivePage');
+  if(element)element.textContent=(previewPage||1)+' / '+(pdfObject?.numPages||'–');
+}
+function setMobileImmersive(on){
+  const viewer=$('viewer');
+  viewer.classList.toggle('mobile-immersive',Boolean(on));
+  if(!on)viewer.classList.remove('show-menu','show-results');
+  const b=$('immersiveToolbar');if(b)b.textContent='☰ Menu';
+  if(pdfObject&&!viewer.classList.contains('native')){
+    requestAnimationFrame(()=>renderPdfPage(previewPage).catch(console.warn));
+  }
+}
 function syncViewerFullscreen(){
   const viewer=$('viewer');
   const active=document.fullscreenElement===viewer || document.webkitFullscreenElement===viewer;
@@ -429,6 +493,8 @@ function syncViewerFullscreen(){
   btn.textContent=active||focused?'⤢ Exit Fullscreen':'⛶ Fullscreen';
   btn.setAttribute('aria-pressed',String(Boolean(active||focused)));
   btn.title=active||focused?'Exit Fullscreen (F)':'Fullscreen (F)';
+  if(window.matchMedia('(max-width:800px)').matches)setMobileImmersive(Boolean(active||focused));
+  else if(viewer.classList.contains('mobile-immersive'))setMobileImmersive(false);
 }
 async function toggleViewerFullscreen(){
   const viewer=$('viewer');
@@ -458,7 +524,7 @@ function closeViewer(){
   previewToken++;searchToken++;renderToken++;
   if(document.fullscreenElement===$('viewer') && document.exitFullscreen)document.exitFullscreen().catch(()=>{});
   else if(document.webkitFullscreenElement===$('viewer') && document.webkitExitFullscreen)document.webkitExitFullscreen();
-  $('viewer').classList.remove('open','native','focus-mode');$('pdfFrame').src='about:blank';document.body.style.overflow='';syncViewerFullscreen();
+  $('viewer').classList.remove('open','native','focus-mode','mobile-immersive','show-menu','show-results');$('pdfFrame').src='about:blank';document.body.style.overflow='';syncViewerFullscreen();
   const old=viewURL;viewURL=null;viewDoc=null;pdfObject=null;pdfBlob=null;
   if(old)setTimeout(()=>URL.revokeObjectURL(old),3000);
 }
@@ -483,8 +549,13 @@ async function actions(e){const button=e.target.closest('[data-act]');if(!button
 async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v));if(v!=='ALL')$('plane').add(new Option(l,v))});db=await idb();await localReload();connection();if('serviceWorker'in navigator&&location.protocol!=='file:'){try{await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('shellStatus').textContent='App shell siap untuk offline (pastikan uji buka ulang dengan mode pesawat).'}catch(e){$('shellStatus').textContent='Service Worker belum siap: '+e.message}}else $('shellStatus').textContent='Gunakan HTTPS (misalnya GitHub Pages) untuk instalasi PWA dan offline.';
   $('search').oninput=render;$('aircraft').onchange=render;$('docs').onclick=actions;$('tabs').onclick=e=>{const b=e.target.closest('[data-tab]');if(!b)return;tab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('selected',x===b));render()};
   $('syncAll').onclick=downloadAll;$('signIn').onclick=()=>{if(!fb){toast('Firebase belum siap. Periksa konfigurasi dan koneksi.');return}modal('loginModal',true)};$('signOut').onclick=()=>fb&&fb.auth.signOut(fb.authObj);$('showPass').onchange=e=>$('password').type=e.target.checked?'text':'password';$('loginForm').onsubmit=async e=>{e.preventDefault();if(loggingIn)return;loggingIn=true;$('loginSubmit').disabled=true;try{await fb.auth.signInWithEmailAndPassword(fb.authObj,$('email').value.trim(),$('password').value);$('password').value='';modal('loginModal',false);toast('Login berhasil. Sinkronisasi katalog sedang berlangsung.')}catch(err){toast('Login gagal: '+err.message)}finally{loggingIn=false;$('loginSubmit').disabled=false}};
-  $('newManual').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('adminUpload').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('uploadForm').onsubmit=publish;$('pdf').onchange=()=>{const f=$('pdf').files[0];$('pdfInfo').textContent=f?`${f.name} · ${bytesLabel(f.size)}. Lama upload tergantung jaringan; pantau progres di bawah.`:'Pilih PDF untuk upload.';$('uploadProgressWrap').hidden=true;$('uploadDiagnostic').hidden=true;$('storageCheckResult').hidden=true};$('cancelUpload').onclick=cancelCurrentUpload;$('storageCheck').onclick=checkStorageConnection;document.querySelectorAll('[data-close]').forEach(b=>{if(b.id!=='cancelUpload')b.onclick=()=>{if(b.dataset.close==='uploadModal'&&uploadBusy)return toast('Batalkan upload terlebih dahulu.');modal(b.dataset.close,false)}});$('back').onclick=closeViewer;$('viewerFullscreen').onclick=toggleViewerFullscreen;document.addEventListener('fullscreenchange',syncViewerFullscreen);document.addEventListener('webkitfullscreenchange',syncViewerFullscreen);
-  let previewResizeTimer;const resizePreview=()=>{if(!$('viewer').classList.contains('open'))return;clearTimeout(previewResizeTimer);previewResizeTimer=setTimeout(()=>{if(pdfObject&&!$('viewer').classList.contains('native'))renderPdfPage(previewPage).catch(console.warn)},170)};window.addEventListener('resize',resizePreview);document.addEventListener('fullscreenchange',resizePreview);document.addEventListener('webkitfullscreenchange',resizePreview);
+  $('newManual').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('adminUpload').onclick=()=>{if(!navigator.onLine)return toast('Upload membutuhkan koneksi internet.');modal('uploadModal',true)};$('uploadForm').onsubmit=publish;$('pdf').onchange=()=>{const f=$('pdf').files[0];$('pdfInfo').textContent=f?`${f.name} · ${bytesLabel(f.size)}. Lama upload tergantung jaringan; pantau progres di bawah.`:'Pilih PDF untuk upload.';$('uploadProgressWrap').hidden=true;$('uploadDiagnostic').hidden=true;$('storageCheckResult').hidden=true};$('cancelUpload').onclick=cancelCurrentUpload;$('storageCheck').onclick=checkStorageConnection;document.querySelectorAll('[data-close]').forEach(b=>{if(b.id!=='cancelUpload')b.onclick=()=>{if(b.dataset.close==='uploadModal'&&uploadBusy)return toast('Batalkan upload terlebih dahulu.');modal(b.dataset.close,false)}});$('back').onclick=closeViewer;$('viewerFullscreen').onclick=toggleViewerFullscreen;
+  $('immersiveExit').onclick=toggleViewerFullscreen;
+  $('immersiveToolbar').onclick=()=>{const v=$('viewer');const show=v.classList.toggle('show-menu');$('immersiveToolbar').textContent=show?'✕ Tutup':'☰ Menu'};
+  $('immersivePlus').onclick=()=>{previewScale=Math.min(3,previewScale+.25);if(pdfObject)renderPdfPage(previewPage).catch(console.warn);else toast('Zoom dapat digunakan setelah PDF siap dalam pembaca interaktif.')} ;
+  $('immersiveMinus').onclick=()=>{previewScale=Math.max(.5,previewScale-.25);if(pdfObject)renderPdfPage(previewPage).catch(console.warn);else toast('Zoom dapat digunakan setelah PDF siap dalam pembaca interaktif.')} ;document.addEventListener('fullscreenchange',syncViewerFullscreen);document.addEventListener('webkitfullscreenchange',syncViewerFullscreen);
+  let previewResizeTimer;const resizePreview=()=>{if(!$('viewer').classList.contains('open'))return;clearTimeout(previewResizeTimer);previewResizeTimer=setTimeout(()=>{if(pdfObject&&!$('viewer').classList.contains('native'))renderPdfPage(previewPage).catch(console.warn)},170)};window.addEventListener('resize',resizePreview);
+  const syncVisualViewport=()=>{const v=window.visualViewport;document.documentElement.style.setProperty('--viewer-height',(v?.height||window.innerHeight)+'px')};syncVisualViewport();window.visualViewport?.addEventListener('resize',()=>{syncVisualViewport();resizePreview()});document.addEventListener('fullscreenchange',resizePreview);document.addEventListener('webkitfullscreenchange',resizePreview);
   $('viewerOffline').onclick=makeViewedOffline;
   $('pagePrev').onclick=()=>renderPdfPage(previewPage-1).catch(e=>toast(e.message));
   $('pageNext').onclick=()=>renderPdfPage(previewPage+1).catch(e=>toast(e.message));
@@ -499,7 +570,7 @@ async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v)
   $('persistent').onclick=async()=>{if(!navigator.storage?.persist)return toast('Browser ini tidak mendukung persistent storage.');toast(await navigator.storage.persist()?'Persistent storage disetujui. Tetap siapkan backup.':'Belum diizinkan browser. Periksa storage dan uji offline.')};
   $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Buka aplikasi saat online (tanpa login).\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
   $('export').onclick=()=>{const data=merged().map(({file,...d})=>d);const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='TWA-manual-inventory.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),3000)};
-  $('install').onclick=async()=>{if(installEvent){installEvent.prompt();await installEvent.userChoice;installEvent=null}else alert('iPhone: Safari → Share → Add to Home Screen.\nAndroid: Chrome → Menu → Install app / Add to Home screen.\nDesktop: gunakan ikon Install pada address bar.')} ;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvent=e});
+  $('install').onclick=requestAppInstallation;refreshInstallButton();
   window.addEventListener('online',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi kembali — Firebase melanjutkan upload…';if(!fb)loadFirebase();else if(!catalogUnsubscribe)startPublicCatalogListener()});window.addEventListener('offline',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi internet terputus — upload menunggu jaringan';});document.addEventListener('keydown',e=>{if((e.key==='f'||e.key==='F')&&$('viewer').classList.contains('open')&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();toggleViewerFullscreen();return;}if(e.key==='Escape'){if(document.fullscreenElement===$('viewer')||document.webkitFullscreenElement===$('viewer'))return;if($('viewer').classList.contains('focus-mode')){$('viewer').classList.remove('focus-mode');syncViewerFullscreen();return;}closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
 }
 init().catch(e=>{console.error(e);$('docs').innerHTML='<div class="empty">Tidak dapat menggunakan penyimpanan browser. Gunakan mode browser biasa (bukan Private), aktifkan penyimpanan situs, kemudian coba kembali.</div>'});
