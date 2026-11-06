@@ -1,6 +1,6 @@
 [
   {
-    "origin": ["https://YOUR-USERNAME.github.io"],
+    "origin": ["*"],
     "method": ["GET", "HEAD"],
     "responseHeader": ["Content-Type", "Content-Length", "ETag"],
     "maxAgeSeconds": 3600

@@ -62,12 +62,68 @@ async function refreshCloud(){
   if(!fb||!navigator.onLine)return;
   applyCloudSnapshot(await fb.fs.getDocs(publicManualQuery()));
 }
-async function downloadDoc(d){if(!fb||!navigator.onLine)throw Error('Internet diperlukan untuk download pertama kali.');const path=d.storagePath;if(!path)throw Error('Lokasi file cloud tidak ditemukan.');const {st,bucket}=fb;let blob;
-  try{blob=await st.getBlob(st.ref(bucket,path))}catch(e){throw Error('Download gagal. Periksa Storage Rules dan konfigurasi CORS bucket. '+e.message)}
-  if(!(blob instanceof Blob)||blob.size===0)throw Error('PDF kosong.');const bytes=new Uint8Array(await blob.slice(0,5).arrayBuffer());if(String.fromCharCode(...bytes)!=='%PDF-')throw Error('File cloud bukan PDF valid.');
-  if(d.bytes&&blob.size!==d.bytes)throw Error('Ukuran PDF tidak sesuai dengan katalog.');
-  if(d.sha256){if(!crypto.subtle)throw Error('Browser tidak mendukung verifikasi checksum.');const digest=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());const hash=[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');if(hash!==d.sha256)throw Error('Checksum PDF tidak cocok — download dibatalkan.');}
-  const localDoc={...d,file:new File([blob],d.filename||'manual.pdf',{type:'application/pdf'}),savedAt:Date.now()};await tx('readwrite',s=>s.put(localDoc));await localReload();return localDoc;
+// Prefer the public Firebase Storage media endpoint over getBlob(): public V8 rules permit
+// unauthenticated reads, and a media URL can be embedded in the native PDF viewer immediately.
+// Do not persist tokenized URLs, or cache PDF bytes in the service worker.
+function manualMediaURL(d){
+  const bucket=window.TWA_FIREBASE_CONFIG?.storageBucket;
+  const path=String(d.storagePath||'');
+  if(!bucket||!/^manuals\/[A-Za-z0-9_-]+\.pdf$/.test(path))throw Error('Lokasi manual tidak valid.');
+  return 'https://firebasestorage.googleapis.com/v0/b/'+encodeURIComponent(bucket)+'/o/'+encodeURIComponent(path)+'?alt=media';
+}
+function cloudMessage(err){
+  if(err?.name==='AbortError')return 'Server tidak merespons tepat waktu. Coba koneksi lain.';
+  if(err instanceof TypeError)return 'Browser memblokir pengambilan PDF lintas domain (CORS) atau koneksi terputus. Periksa CORS bucket dan tab Network.';
+  return String(err?.message||err);
+}
+async function fetchCloudPDF(d,onProgress){
+  if(!navigator.onLine)throw Error('Internet diperlukan untuk download pertama kali.');
+  const url=manualMediaURL(d);
+  const controller=new AbortController();
+  // Timeout is for connecting/receiving response headers, not downloading a large PDF.
+  const firstByteTimer=setTimeout(()=>controller.abort(),20000);
+  let res;
+  try{res=await fetch(url,{method:'GET',mode:'cors',cache:'no-store',signal:controller.signal});}
+  catch(e){throw Error(cloudMessage(e))}
+  finally{clearTimeout(firstByteTimer)}
+  if(!res.ok){
+    let info='';try{info=(await res.text()).slice(0,250)}catch{}
+    throw Error('Firebase Storage HTTP '+res.status+(res.status===403?' — aturan baca publik belum aktif.':res.status===404?' — PDF tidak ditemukan di bucket.':'')+' '+info);
+  }
+  const total=Number(res.headers.get('content-length'))||Number(d.bytes)||0;
+  if(!res.body){const b=await res.blob();onProgress?.(b.size,total);return b}
+  const reader=res.body.getReader(),chunks=[];let received=0;
+  try{
+    while(true){
+      const {done,value}=await reader.read();if(done)break;
+      chunks.push(value);received+=value.byteLength;
+      if(received>110*1024*1024)throw Error('PDF melebihi batas aplikasi 110 MB.');
+      onProgress?.(received,total);
+    }
+  }finally{reader.releaseLock()}
+  return new Blob(chunks,{type:'application/pdf'});
+}
+async function validatePDF(d,blob){
+  if(!(blob instanceof Blob)||blob.size<5)throw Error('PDF kosong.');
+  const bytes=new Uint8Array(await blob.slice(0,5).arrayBuffer());
+  if(String.fromCharCode(...bytes)!=='%PDF-')throw Error('File dari cloud bukan PDF valid.');
+  if(d.bytes&&blob.size!==d.bytes)throw Error('Ukuran file berbeda dengan katalog ('+blob.size+' / '+d.bytes+' byte).');
+  if(d.sha256){
+    if(!crypto.subtle)throw Error('Browser tidak mendukung pemeriksaan checksum.');
+    const digest=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
+    const hash=[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    if(hash!==d.sha256)throw Error('Checksum tidak cocok. File belum disimpan offline.');
+  }
+}
+async function storeOffline(d,blob){
+  await validatePDF(d,blob);
+  const record={...d,file:new File([blob],d.filename||'manual.pdf',{type:'application/pdf'}),savedAt:Date.now()};
+  delete record.remoteURL;delete record.local;
+  await tx('readwrite',store=>store.put(record));await localReload();return record;
+}
+async function downloadDoc(d){
+  const blob=await fetchCloudPDF(d,(done,total)=>toast('Mengunduh '+d.title+': '+(total?Math.round(100*done/total)+'%':(done/1048576).toFixed(1)+' MB')));
+  return storeOffline(d,blob);
 }
 async function downloadAll(){if(!cloud.length)return;const btn=$('syncAll');btn.disabled=true;let done=0,fail=0;for(const d of cloud.filter(c=>!local.some(l=>l.id===c.id))){btn.textContent=`Mengunduh ${done+fail+1}…`;try{await downloadDoc(d);done++}catch(e){fail++;console.error('Download',d.title,e);toast(`${d.title}: ${e.message}`)}}btn.textContent='↓ Unduh Semua ke Offline';render();toast(`${done} PDF berhasil tersimpan, ${fail} gagal. Uji satu per satu saat mode pesawat.`)}
 function setUploadProgress(percent,status,stats){
@@ -304,41 +360,63 @@ async function openDoc(d){
   const token=++previewToken;
   searchToken++;renderToken++;
   viewDoc=null;pdfBlob=null;pdfObject=null;
-  $('viewer').classList.remove('native');
-  $('viewer').classList.add('open');document.body.style.overflow='hidden';
+  $('viewer').classList.add('open','native');document.body.style.overflow='hidden';
   $('viewTitle').textContent=d.aircraft+' · '+d.title;
-  $('pdfHits').textContent='Ketik kata atau frasa dan pilih Cari.';
-  $('pdfSearch').value='';setPreviewStatus('Membuka dokumen…');
+  $('pdfHits').textContent='Pencarian disiapkan. Sementara itu PDF dapat dibaca di preview asli.';
+  $('pdfSearch').value='';$('findPdf').disabled=true;
+  setPreviewStatus('Membuka preview PDF…');
   $('pageTotal').textContent='/ –';$('pageNum').value=1;
   const localDoc=local.find(x=>x.id===d.id);
   $('viewerOffline').hidden=!!localDoc;
   try{
-    let blob=localDoc?.file;
-    if(!blob){
-      if(!fb||!navigator.onLine)throw Error('Dokumen belum tersedia offline. Hubungkan internet dan pilih Make Offline.');
-      blob=await fb.st.getBlob(fb.st.ref(fb.bucket,d.storagePath));
-      if(d.bytes&&blob.size!==d.bytes)throw Error('Ukuran dokumen berbeda dengan katalog.');
+    let blob=localDoc?.file||null;
+    if(viewURL){URL.revokeObjectURL(viewURL);viewURL=null}
+    if(blob){
+      viewURL=URL.createObjectURL(blob);$('pdfFrame').src=viewURL+'#toolbar=1';
+      viewDoc={...d,file:blob,filename:d.filename||d.title+'.pdf'};
+      setPreviewStatus('PDF offline dibuka. Memuat mesin pencarian…');
+    }else{
+      if(!navigator.onLine)throw Error('PDF belum disimpan offline. Hubungkan internet dan tekan Make Offline.');
+      const url=manualMediaURL(d);
+      // Browser native viewer can stream/display immediately without retrieving full file in JS.
+      $('pdfFrame').src=url+'#toolbar=1';
+      viewDoc={...d,file:null,remoteURL:url,filename:d.filename||d.title+'.pdf'};
+      setPreviewStatus('Preview cloud terbuka. Menyiapkan pencarian teks…');
+      // Fetch in parallel only for interactive full-text search and Make Offline.
+      // Failure must NEVER prevent the native PDF preview from remaining visible.
+      try{
+        blob=await fetchCloudPDF(d,(done,total)=>{
+          if(token===previewToken)setPreviewStatus('Menyiapkan pencarian: '+(total?Math.min(100,Math.floor(done/total*100))+'%':(done/1048576).toFixed(1)+' MB'));
+        });
+      }catch(err){
+        if(token!==previewToken)return;
+        setPreviewStatus('Preview asli tersedia. Pencarian/Make Offline belum siap: '+cloudMessage(err));
+        $('pdfHits').textContent='PDF asli dapat dibaca. Untuk pencarian interaktif dan Make Offline, pengunduhan data membutuhkan CORS bucket yang benar. Periksa README V10.';
+        return;
+      }
+      if(token!==previewToken)return;
+      await validatePDF(d,blob);
+      viewDoc.file=blob;
     }
     if(token!==previewToken)return;
-    const magic=new Uint8Array(await blob.slice(0,5).arrayBuffer());
-    if(String.fromCharCode(...magic)!=='%PDF-')throw Error('File bukan PDF yang valid.');
     pdfBlob=blob;
-    viewDoc={...d,file:blob,filename:d.filename||d.title+'.pdf'};
-    if(viewURL)URL.revokeObjectURL(viewURL);
-    viewURL=URL.createObjectURL(blob);
-    $('pdfFrame').src=viewURL+'#toolbar=1';
     const engine=await getPdfEngine();
     if(token!==previewToken)return;
     pdfObject=await engine.getDocument({data:new Uint8Array(await blob.arrayBuffer())}).promise;
     if(token!==previewToken)return;
     previewScale=1;previewPage=1;
+    $('viewer').classList.remove('native');
     await renderPdfPage(1);
-    setPreviewStatus(pdfObject.numPages+' halaman · siap dicari');
+    $('findPdf').disabled=false;
+    setPreviewStatus(pdfObject.numPages+' halaman · preview dan pencarian siap');
   }catch(e){
     if(token!==previewToken)return;
     console.error('Preview',e);
-    if(viewURL){$('viewer').classList.add('native');setPreviewStatus('Mode PDF bawaan: '+e.message);}
-    else {setPreviewStatus('Preview gagal: '+e.message);toast(e.message)}
+    if(viewDoc?.remoteURL||viewURL){
+      $('viewer').classList.add('native');
+      setPreviewStatus('PDF asli tersedia; pencarian belum siap: '+cloudMessage(e));
+      $('pdfHits').textContent='Pembaca PDF bawaan aktif. Coba kembali saat online atau gunakan Make Offline.';
+    }else{setPreviewStatus('Preview gagal: '+cloudMessage(e));toast(cloudMessage(e))}
   }
 }
 function closeViewer(){
@@ -348,25 +426,21 @@ function closeViewer(){
   if(old)setTimeout(()=>URL.revokeObjectURL(old),3000);
 }
 function savePdf(){
-  if(!viewDoc?.file)return toast('Dokumen belum selesai dimuat.');
-  const u=URL.createObjectURL(viewDoc.file),a=document.createElement('a');a.href=u;a.download=viewDoc.filename||'manual.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(u),60000);
+  if(!viewDoc)return toast('Dokumen belum tersedia.');
+  if(viewDoc.file){
+    const u=URL.createObjectURL(viewDoc.file),a=document.createElement('a');a.href=u;a.download=viewDoc.filename||'manual.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(u),60000);
+  }else if(viewDoc.remoteURL){window.open(viewDoc.remoteURL,'_blank','noopener,noreferrer');toast('PDF cloud dibuka di tab baru. Gunakan menu download browser.');}
 }
 async function makeViewedOffline(){
-  if(!viewDoc?.file)return toast('Buka dokumen terlebih dahulu.');
-  const d=viewDoc;
-  const btn=$('viewerOffline');btn.disabled=true;btn.textContent='Menyimpan…';
+  if(!viewDoc)return toast('Buka dokumen dahulu.');
+  const d=viewDoc,btn=$('viewerOffline');btn.disabled=true;btn.textContent='Menyimpan…';
   try{
-    // For cloud-origin preview verify bytes/checksum using canonical download routine.
-    if(!local.some(x=>x.id===d.id)){
-      const magic=new Uint8Array(await d.file.slice(0,5).arrayBuffer());
-      if(String.fromCharCode(...magic)!=='%PDF-')throw Error('Berkas bukan PDF valid');
-      if(d.bytes&&d.file.size!==d.bytes)throw Error('Ukuran file berbeda dari katalog');
-      if(d.sha256){const hashBytes=await crypto.subtle.digest('SHA-256',await d.file.arrayBuffer());const hash=[...new Uint8Array(hashBytes)].map(b=>b.toString(16).padStart(2,'0')).join('');if(hash!==d.sha256)throw Error('Checksum PDF tidak cocok');}
-      const record={...d,file:new File([d.file],d.filename||'manual.pdf',{type:'application/pdf'}),savedAt:Date.now()};
-      await tx('readwrite',s=>s.put(record));await localReload();
-    }
-    btn.hidden=true;toast('Make Offline berhasil. Dokumen tersimpan pada perangkat ini. Uji saat Airplane Mode.');
-  }catch(e){toast('Make Offline gagal: '+e.message)}finally{btn.disabled=false;btn.textContent='↓ Make Offline'}
+    const blob=d.file||await fetchCloudPDF(d,(done,total)=>{btn.textContent=total?'Download '+Math.floor(done/total*100)+'%':'Download '+(done/1048576).toFixed(1)+' MB'});
+    await storeOffline(d,blob);
+    d.file=blob;btn.hidden=true;
+    toast('Make Offline berhasil. Uji PDF kembali dengan Airplane Mode.');
+  }catch(e){toast('Make Offline gagal: '+cloudMessage(e))}
+  finally{btn.disabled=false;btn.textContent='↓ Make Offline'}
 }
 async function actions(e){const button=e.target.closest('[data-act]');if(!button)return;const d=merged().find(x=>x.id===button.dataset.id);if(!d)return;const action=button.dataset.act;try{if(action==='preview'||action==='open')return await openDoc(d);if(action==='details')return alert(`AIRCRAFT: ${d.aircraft}\nTYPE: ${kinds[d.kind]}\nTITLE: ${d.title}\nREVISION: ${d.revision}\nEFFECTIVE: ${d.effective}\nLOCAL: ${d.local?'YES':'NO'}\n${d.bytes?'SIZE: '+(d.bytes/1048576).toFixed(2)+' MB':''}\n\nPeriksa selalu status revisi melalui document control.`);if(action==='download'){button.disabled=true;button.textContent='Menyimpan offline…';await downloadDoc(d);return toast('Make Offline berhasil. PDF tersimpan pada perangkat ini. Uji saat mode pesawat.')};if(action==='removeLocal'){if(!confirm('Hapus salinan offline '+d.title+' dari perangkat ini?'))return;await tx('readwrite',s=>s.delete(d.id));await localReload();return toast('Salinan lokal dihapus.')};if(action==='removeCloud'){if(!isAdmin||!confirm('Tarik manual ini dari katalog pusat? Salinan pada perangkat pilot lain tidak otomatis terhapus.'))return;await fb.fs.updateDoc(fb.fs.doc(fb.store,'manuals',d.id),{active:false,withdrawnAt:fb.fs.serverTimestamp()});await refreshCloud();return toast('Ditarik dari katalog pusat. Beritahu pilot agar menghapus arsip lama.')}}catch(err){console.error(err);toast(err.message)}finally{render()}}
 async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v));if(v!=='ALL')$('plane').add(new Option(l,v))});db=await idb();await localReload();connection();if('serviceWorker'in navigator&&location.protocol!=='file:'){try{await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('shellStatus').textContent='App shell siap untuk offline (pastikan uji buka ulang dengan mode pesawat).'}catch(e){$('shellStatus').textContent='Service Worker belum siap: '+e.message}}else $('shellStatus').textContent='Gunakan HTTPS (misalnya GitHub Pages) untuk instalasi PWA dan offline.';
@@ -383,7 +457,7 @@ async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v)
   $('stopSearch').onclick=()=>{searchToken++;setPreviewStatus('Pencarian dihentikan')};
   $('pdfSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();searchPdf()}};
   $('pdfHits').onclick=e=>{const hit=e.target.closest('[data-hit]');if(!hit)return;const m=searchMatches[Number(hit.dataset.hit)];if(m){document.querySelectorAll('.result').forEach(r=>r.classList.remove('selected'));hit.classList.add('selected');renderPdfPage(m.page).catch(err=>toast(err.message))}};
-  $('openNative').onclick=()=>{if(!viewDoc)return;const u=URL.createObjectURL(viewDoc.file),w=window.open(u,'_blank');if(!w)toast('Izinkan pop-up atau gunakan Simpan PDF.');setTimeout(()=>URL.revokeObjectURL(u),120000)};$('savePdf').onclick=savePdf;
+  $('openNative').onclick=()=>{if(!viewDoc)return;const remote=viewDoc.remoteURL;if(remote){window.open(remote,'_blank','noopener,noreferrer');return;}if(!viewDoc.file)return toast('PDF belum siap.');const u=URL.createObjectURL(viewDoc.file),w=window.open(u,'_blank');if(!w)toast('Izinkan pop-up atau gunakan Simpan PDF.');setTimeout(()=>URL.revokeObjectURL(u),120000)};$('savePdf').onclick=savePdf;
   $('persistent').onclick=async()=>{if(!navigator.storage?.persist)return toast('Browser ini tidak mendukung persistent storage.');toast(await navigator.storage.persist()?'Persistent storage disetujui. Tetap siapkan backup.':'Belum diizinkan browser. Periksa storage dan uji offline.')};
   $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Buka aplikasi saat online (tanpa login).\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
   $('export').onclick=()=>{const data=merged().map(({file,...d})=>d);const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='TWA-manual-inventory.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),3000)};
