@@ -63,6 +63,21 @@
  .viewer.mobile-immersive.native .viewstage{padding:calc(44px + env(safe-area-inset-top)) 0 env(safe-area-inset-bottom)}
  .viewer.mobile-immersive .results{top:calc(44px + env(safe-area-inset-top))}
 }
+
+/* V16: mobile search results are a readable scrollable bottom sheet instead of a permanently hidden sidebar. */
+.viewer .results-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 10px;border-bottom:1px solid #37516a;position:sticky;top:0;z-index:2;background:#10243b}
+.viewer .results-header h4{margin:7px 0;font-size:14px}
+.viewer .results-header button{padding:5px 9px;font-size:12px}
+.viewer .results{overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.viewer .result{line-height:1.45}
+@media (max-width:800px){
+ .viewer .results{position:absolute;top:auto!important;left:0;right:0;bottom:0;width:100%;max-width:100%;height:min(50dvh,440px);min-height:180px;z-index:9;border-left:none;border-top:2px solid #69c2ff;border-radius:16px 16px 0 0;box-shadow:0 -10px 36px #000b;display:none;overflow-y:auto;padding-bottom:env(safe-area-inset-bottom)}
+ .viewer.show-results:not(.native) .results{display:block}
+ .viewer .result{font-size:13px;padding:11px 14px}
+ .viewer #pdfHits{padding:0!important}
+ .viewer #toggleResults:not([hidden]){display:inline-flex;align-items:center}
+ .viewer.mobile-immersive .results{bottom:0;top:auto!important;z-index:10}
+}
 </style></head><body><header><div class="inner"><div class="brand"><img src="./icon-192.png" alt="Logo aplikasi"><div><strong>TRANSWISATA</strong><small>FLIGHT MANUALS · PREVIEW & OFFLINE</small></div></div><span id="connection" class="indicator">Memeriksa</span></div></header>
 <main><section class="hero"><div><div class="eyebrow">CONTROLLED DOCUMENT LIBRARY</div><h1>Flight Manuals. Ready to Fly.</h1></div><div class="symbol">📚</div></section>
 <div class="statusline"><span id="cloudState" class="chip">Cloud: belum dikonfigurasi</span><span id="roleState" class="chip">Mode: Offline lokal</span><span id="localState" class="chip">Offline: 0 dokumen</span></div>
@@ -77,6 +92,6 @@
 <div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="Preview manual PDF">
 <div class="mobile-immersive-controls" id="immersiveControls" aria-label="Kontrol tampilan layar penuh"><button class="btn" id="immersiveExit" type="button">✕ Keluar</button><span class="immersive-page" id="immersivePage">1 / –</span><button class="btn" id="immersiveMinus" type="button" aria-label="Perkecil PDF">−</button><button class="btn" id="immersivePlus" type="button" aria-label="Perbesar PDF">+</button><button class="btn" id="immersiveToolbar" type="button">☰ Menu</button></div>
 <div class="viewhead"><button id="back" class="btn">← Kembali</button><span id="viewTitle" class="viewtitle">Manual</span><button id="viewerFullscreen" class="btn" type="button" aria-label="Aktifkan fullscreen preview" aria-pressed="false" title="Fullscreen (F)">⛶ Fullscreen</button><button id="viewerOffline" class="btn good">↓ Make Offline</button><button id="openNative" class="btn">PDF Asli</button><button id="savePdf" class="btn">Simpan PDF</button></div>
-<div class="viewtools"><button id="pagePrev" class="btn" aria-label="Halaman sebelumnya">◀</button><input id="pageNum" type="number" min="1" value="1" style="max-width:70px" aria-label="Nomor halaman"><span id="pageTotal">/ –</span><button id="pageNext" class="btn" aria-label="Halaman berikutnya">▶</button><button id="zoomOut" class="btn">−</button><span id="zoomValue">100%</span><button id="zoomIn" class="btn">+</button><input id="pdfSearch" type="search" placeholder="Cari teks dalam PDF…" aria-label="Pencarian isi PDF"><button id="findPdf" class="btn primary">Cari</button><button id="stopSearch" class="btn">Stop</button><span id="searchStatus" aria-live="polite"></span></div>
-<div class="viewbody"><div class="viewstage" id="viewStage"><canvas id="pageCanvas"></canvas><iframe id="pdfFrame" title="PDF Manual"></iframe></div><aside class="results" id="pdfResults" aria-label="Hasil pencarian"><h4>Hasil Pencarian</h4><div id="pdfHits" class="hint" style="padding:12px">Ketik kata atau frasa, lalu tekan Cari. Pilih hasil untuk menuju halaman terkait.</div></aside></div>
+<div class="viewtools"><button id="pagePrev" class="btn" aria-label="Halaman sebelumnya">◀</button><input id="pageNum" type="number" min="1" value="1" style="max-width:70px" aria-label="Nomor halaman"><span id="pageTotal">/ –</span><button id="pageNext" class="btn" aria-label="Halaman berikutnya">▶</button><button id="zoomOut" class="btn">−</button><span id="zoomValue">100%</span><button id="zoomIn" class="btn">+</button><input id="pdfSearch" type="search" placeholder="Cari teks dalam PDF…" aria-label="Pencarian isi PDF"><button id="findPdf" class="btn primary">Cari</button><button id="toggleResults" class="btn" type="button" aria-controls="pdfResults" aria-expanded="false" hidden>Hasil (0)</button><button id="stopSearch" class="btn">Stop</button><span id="searchStatus" aria-live="polite"></span></div>
+<div class="viewbody"><div class="viewstage" id="viewStage"><canvas id="pageCanvas"></canvas><iframe id="pdfFrame" title="PDF Manual"></iframe></div><aside class="results" id="pdfResults" aria-label="Hasil pencarian"><div class="results-header"><h4>Hasil Pencarian</h4><button class="btn" id="closeResults" type="button" aria-label="Tutup hasil pencarian">✕ Tutup</button></div><div id="pdfHits" class="hint" style="padding:12px">Ketik kata atau frasa, lalu tekan Cari. Pilih hasil untuk menuju halaman terkait.</div></aside></div>
 <p id="previewHint">Gunakan Make Offline agar manual tersimpan di perangkat. Pencarian bekerja pada PDF dengan teks yang dapat dipilih; PDF hasil scan mungkin memerlukan OCR.</p></div><div id="toast" role="status"></div><script src="./config.js?v=19"></script><script src="./app.js?v=19"></script></body></html>

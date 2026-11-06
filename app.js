@@ -376,10 +376,29 @@ function highlightSnippet(text,term){
   if(pos<0)return clean(text.slice(0,180));
   return clean(text.slice(Math.max(0,pos-55),pos))+'<mark>'+clean(text.slice(pos,pos+term.length))+'</mark>'+clean(text.slice(pos+term.length,pos+term.length+100));
 }
+function showSearchResults(show){
+  const viewer=$('viewer');
+  const visible=Boolean(show && !viewer.classList.contains('native'));
+  viewer.classList.toggle('show-results',visible);
+  const btn=$('toggleResults');
+  btn.setAttribute('aria-expanded',String(visible));
+  if(visible){
+    const drawer=$('pdfResults');
+    drawer.scrollTop=0;
+  }
+}
+function updateResultButton(){
+  const btn=$('toggleResults');
+  const n=searchMatches.length;
+  btn.hidden=n===0;
+  btn.textContent='Hasil ('+n+')';
+  if(n && matchMedia('(max-width:800px)').matches && !$('viewer').classList.contains('native'))showSearchResults(true);
+}
 async function searchPdf(){
   const query=$('pdfSearch').value.trim();
   if(!query||!pdfObject)return;
   const token=++searchToken;searchMatches=[];
+  showSearchResults(false);$('toggleResults').hidden=true;
   $('pdfHits').innerHTML='Memulai pencarian…';setPreviewStatus('Mencari…');
   let total=0;
   for(let pageNo=1;pageNo<=pdfObject.numPages;pageNo++){
@@ -399,18 +418,20 @@ async function searchPdf(){
     if(pageNo%8===0||pageNo===pdfObject.numPages||total>=300){
       setPreviewStatus('Halaman '+pageNo+'/'+pdfObject.numPages+' · '+total+' hasil');
       $('pdfHits').innerHTML=searchMatches.length?searchMatches.map((m,i)=>`<button type="button" class="result" data-hit="${i}"><small>Halaman ${m.page}</small>${highlightSnippet(m.text,query)}</button>`).join(''):'Belum ada hasil.';
+      updateResultButton();
       await new Promise(resolve=>setTimeout(resolve,0));
     }
     if(total>=300)break;
   }
   if(token!==searchToken)return;
+  updateResultButton();
   setPreviewStatus(total?total+' hasil · klik hasil untuk ke halaman':'Teks tidak ditemukan');
   if(!total)$('pdfHits').textContent='Tidak ditemukan. Untuk PDF scan gambar, pencarian teks memerlukan OCR.';
 }
 async function openDoc(d){
   const token=++previewToken;
   searchToken++;renderToken++;
-  viewDoc=null;pdfBlob=null;pdfObject=null;
+  viewDoc=null;pdfBlob=null;pdfObject=null;searchMatches=[];showSearchResults(false);$('toggleResults').hidden=true;
   $('viewer').classList.add('open','native');document.body.style.overflow='hidden';syncViewerFullscreen();
   $('viewTitle').textContent=d.aircraft+' · '+d.title;
   $('pdfHits').textContent='Pencarian disiapkan. Sementara itu PDF dapat dibaca di preview asli.';
@@ -563,14 +584,16 @@ async function init(){planes.forEach(([v,l])=>{$('aircraft').add(new Option(l,v)
   $('zoomIn').onclick=()=>{previewScale=Math.min(3,previewScale+0.25);renderPdfPage(previewPage).catch(e=>toast(e.message))};
   $('zoomOut').onclick=()=>{previewScale=Math.max(.5,previewScale-0.25);renderPdfPage(previewPage).catch(e=>toast(e.message))};
   $('findPdf').onclick=searchPdf;
+  $('toggleResults').onclick=()=>showSearchResults(!$('viewer').classList.contains('show-results'));
+  $('closeResults').onclick=()=>showSearchResults(false);
   $('stopSearch').onclick=()=>{searchToken++;setPreviewStatus('Pencarian dihentikan')};
   $('pdfSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();searchPdf()}};
-  $('pdfHits').onclick=e=>{const hit=e.target.closest('[data-hit]');if(!hit)return;const m=searchMatches[Number(hit.dataset.hit)];if(m){document.querySelectorAll('.result').forEach(r=>r.classList.remove('selected'));hit.classList.add('selected');renderPdfPage(m.page).catch(err=>toast(err.message))}};
+  $('pdfHits').onclick=e=>{const hit=e.target.closest('[data-hit]');if(!hit)return;const m=searchMatches[Number(hit.dataset.hit)];if(m){document.querySelectorAll('.result').forEach(r=>r.classList.remove('selected'));hit.classList.add('selected');showSearchResults(false);renderPdfPage(m.page).catch(err=>toast(err.message))}};
   $('openNative').onclick=()=>{if(!viewDoc)return;const remote=viewDoc.remoteURL;if(remote){window.open(remote,'_blank','noopener,noreferrer');return;}if(!viewDoc.file)return toast('PDF belum siap.');const u=URL.createObjectURL(viewDoc.file),w=window.open(u,'_blank');if(!w)toast('Izinkan pop-up atau gunakan Simpan PDF.');setTimeout(()=>URL.revokeObjectURL(u),120000)};$('savePdf').onclick=savePdf;
   $('persistent').onclick=async()=>{if(!navigator.storage?.persist)return toast('Browser ini tidak mendukung persistent storage.');toast(await navigator.storage.persist()?'Persistent storage disetujui. Tetap siapkan backup.':'Belum diizinkan browser. Periksa storage dan uji offline.')};
   $('test').onclick=()=>alert('UJI SEBELUM TERBANG\n1. Buka aplikasi saat online (tanpa login).\n2. Unduh semua manual yang relevan.\n3. Pastikan status “Offline siap”.\n4. Tutup aplikasi, aktifkan Airplane Mode.\n5. Buka kembali dari ikon Home Screen.\n6. Buka setiap PDF dan cek halaman, kelengkapan, revisi.\n7. Bila gagal, gunakan sumber resmi alternatif sesuai prosedur perusahaan.');
   $('export').onclick=()=>{const data=merged().map(({file,...d})=>d);const u=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='TWA-manual-inventory.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),3000)};
   $('install').onclick=requestAppInstallation;refreshInstallButton();
-  window.addEventListener('online',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi kembali — Firebase melanjutkan upload…';if(!fb)loadFirebase();else if(!catalogUnsubscribe)startPublicCatalogListener()});window.addEventListener('offline',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi internet terputus — upload menunggu jaringan';});document.addEventListener('keydown',e=>{if((e.key==='f'||e.key==='F')&&$('viewer').classList.contains('open')&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();toggleViewerFullscreen();return;}if(e.key==='Escape'){if(document.fullscreenElement===$('viewer')||document.webkitFullscreenElement===$('viewer'))return;if($('viewer').classList.contains('focus-mode')){$('viewer').classList.remove('focus-mode');syncViewerFullscreen();return;}closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
+  window.addEventListener('online',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi kembali — Firebase melanjutkan upload…';if(!fb)loadFirebase();else if(!catalogUnsubscribe)startPublicCatalogListener()});window.addEventListener('offline',()=>{connection();if(uploadBusy)$('uploadStatus').textContent='Koneksi internet terputus — upload menunggu jaringan';});document.addEventListener('keydown',e=>{if((e.key==='f'||e.key==='F')&&$('viewer').classList.contains('open')&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'')&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();toggleViewerFullscreen();return;}if(e.key==='Escape'){if($('viewer').classList.contains('show-results')){showSearchResults(false);return;}if(document.fullscreenElement===$('viewer')||document.webkitFullscreenElement===$('viewer'))return;if($('viewer').classList.contains('focus-mode')){$('viewer').classList.remove('focus-mode');syncViewerFullscreen();return;}closeViewer();if(!uploadBusy)modal('uploadModal',false);modal('loginModal',false)}});await loadFirebase();
 }
 init().catch(e=>{console.error(e);$('docs').innerHTML='<div class="empty">Tidak dapat menggunakan penyimpanan browser. Gunakan mode browser biasa (bukan Private), aktifkan penyimpanan situs, kemudian coba kembali.</div>'});
